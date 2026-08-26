@@ -1,0 +1,475 @@
+---
+title: "Tugas 1 Praktikum"
+author: "Intan Aisa M0401241059"
+date: "2026-08-26"
+output: html_document
+---
+
+## Packages
+```{r}
+library(forecast)
+library(graphics)
+library(TTR)
+library(TSA)
+library(readxl)
+library(ggplot2)
+```
+
+## Import, Preprocessing, and Splitting Data 
+
+Data nilai tukar (Kurs IDR to USD) diimpor dari dokumen Excel. Selanjutnya, data diubah menjadi objek time series (ts). Untuk kebutuhan pemodelan dan evaluasi performa peramalan, data dibagi menjadi dua bagian dengan rasio 80% data latih (training set) dan 20% data uji (testing set).
+
+```{r}
+# Import data
+data <- read_excel("/Users/intanaisa/Documents/Kuliah/Semester 5/Metode Peramalan Deret Waktu/Praktikum/059_MPDW/Pertemuan 1/Data.xlsx")
+
+# Ubah ke time series
+data.ts <- ts(data$Kurs)
+
+# Hitung jumlah data dan bagi 80% train : 20% test
+n <- nrow(data)
+n_train <- floor(0.8 * n)
+
+training_ma <- data[1:n_train, ]
+testing_ma  <- data[(n_train + 1):n, ]
+
+train_ma.ts <- ts(training_ma$Kurs)
+test_ma.ts  <- ts(testing_ma$Kurs)
+```
+
+## Eksplorasi
+
+Eksplorasi data visual dilakukan untuk memetakan pola dan pergerakan historis nilai tukar IDR terhadap USD. Plot di bawah memperlihatkan pemisahan secara visual antara periode data latih (biru) dan data uji (merah).
+
+```{r}
+ggplot() + 
+  geom_line(data = training_ma, aes(x = Tanggal, y = Kurs, col = "Data Latih")) +
+  geom_line(data = testing_ma, aes(x = Tanggal, y = Kurs, col = "Data Uji")) +
+  labs(title = "Eksplorasi Data Kurs IDR to USD", x = "Tanggal", y = "Kurs", color = "Keterangan:") +
+  scale_colour_manual(values = c("Data Latih" = "blue", "Data Uji" = "red")) + 
+  theme_bw() + 
+  theme(legend.position = "bottom", plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+Berdasarkan plot eksplorasi di atas, pergerakan nilai tukar kurs IDR terhadap USD menunjukkan pola yang tidak stasioner, baik dalam rataan maupun ragam, serta dicirikan oleh perubahan tren lokal yang dinamis. Pada data latih (garis biru), kurs mengalami tren kenaikan (*upward trend*) yang signifikan hingga mencapai puncaknya di atas IDR 15.750 pada kurun waktu November hingga Desember, kemudian mengalami penurunan tajam menjelang Januari dan sempat melandai kembali di kisaran IDR 15.250 hingga 15.500. Memasuki periode data uji (garis merah), pergerakan kurs berbalik arah mengalami tren penurunan (*downward trend*) hingga menyentuh kisaran IDR 14.650 sampai 14.800 sebelum akhirnya sedikit terkoreksi naik. Adanya titik balik (*turning point*) dan tren yang kuat ini mengindikasikan bahwa metode pemulusan sederhana seperti SMA dan SES yang menghasilkan peramalan konstan mendatar diprediksi kurang responsif, sedangkan metode pemulusan bertren seperti DMA dan DES berpotensi lebih sensitif terhadap kemiringan data di akhir periode latih.
+
+## Single Moving Average (SMA)
+
+Metode Single Moving Average (SMA) memanfaatkan rata-rata bergerak dari $n$ periode terakhir untuk meratakan fluktuasi jangka pendek. Pada tahap ini digunakan nilai $n = 2$.
+
+```{r}
+# 1. Pemulusan SMA (n = 2)
+data.sma <- SMA(train_ma.ts, n = 2)
+
+# 2. Peramalan 1 periode ke depan untuk data latih
+data.ramal.sma <- c(NA, data.sma)
+```
+
+Selanjutnya dilakukan peramalan untuk periode data uji. Pada metode SMA, nilai ramalan untuk seluruh $h$-periode ke depan pada data uji bersifat konstan (konstanta horizontal), yaitu mengacu pada nilai hasil pemulusan terakhir dari data latih.
+
+```{r}
+# 3. Peramalan 39 periode ke depan untuk data uji
+n_test <- length(test_ma.ts)
+ramalan_sma_test <- rep(data.ramal.sma[length(data.ramal.sma)], n_test)
+```
+
+Seluruh komponen (data aktual, pemulusan, dan hasil peramalan) digabungkan ke dalam satu matriks/data frame untuk mempermudah plotting dan evaluasi kesalahan.
+
+```{r}
+# 4. Penggabungan Data (Total 195 observasi)
+data.gab.sma <- cbind(
+  aktual    = c(data.ts),
+  pemulusan = c(data.sma, rep(NA, n_test)),
+  ramalan   = c(data.ramal.sma, ramalan_sma_test[-1])
+)
+```
+
+Grafik berikut menampilkan perbandingan antara data aktual, kurva pemulusan SMA ($n=2$), dan garis peramalan pada data uji.
+
+```{r}
+# 5. Visualisasi Plot SMA
+ts.plot(data.ts, xlab = "Time Period", ylab = "Kurs IDR to USD", main = "SMA N=2 Data Kurs")
+points(data.ts, cex = 0.5)
+lines(data.gab.sma[, "pemulusan"], col = "green", lwd = 2)
+lines(data.gab.sma[, "ramalan"], col = "red", lwd = 2)
+legend("topleft", legend = c("Data Aktual", "Data Pemulusan", "Data Peramalan"), 
+       col = c("black", "green", "red"), lty = 1, lwd = 2, cex = 0.7)
+```
+
+Langkah terakhir untuk metode SMA adalah mengukur tingkat akurasi pemodelan pada data latih maupun data uji menggunakan kriteria matriks galat (SSE, MSE, dan MAPE).
+
+```{r}
+# 6. Akurasi Data Latih
+error_train.sma  <- train_ma.ts - data.ramal.sma[1:n_train]
+SSE_train.sma    <- sum(error_train.sma[3:n_train]^2, na.rm = TRUE)
+MSE_train.sma    <- mean(error_train.sma[3:n_train]^2, na.rm = TRUE)
+MAPE_train.sma   <- mean(abs(error_train.sma[3:n_train] / train_ma.ts[3:n_train]) * 100, na.rm = TRUE)
+
+akurasi_train.sma <- matrix(c(SSE_train.sma, MSE_train.sma, MAPE_train.sma), 
+                            dimnames = list(c("SSE", "MSE", "MAPE (%)"), "Akurasi Train (n=2)"))
+
+# 7. Akurasi Data Uji
+error_test.sma  <- test_ma.ts - data.gab.sma[(n_train + 1):n, "ramalan"]
+SSE_test.sma    <- sum(error_test.sma^2)
+MSE_test.sma    <- mean(error_test.sma^2)
+MAPE_test.sma   <- mean(abs(error_test.sma / test_ma.ts) * 100)
+
+akurasi_test.sma <- matrix(c(SSE_test.sma, MSE_test.sma, MAPE_test.sma), 
+                           dimnames = list(c("SSE", "MSE", "MAPE (%)"), "Akurasi Test (n=2)"))
+
+# Tampilkan Tabel Akurasi SMA
+cbind(akurasi_train.sma, akurasi_test.sma)
+```
+
+Hasil evaluasi akurasi menunjukkan bahwa model SMA ($n=2$) menghasilkan nilai galat yang sangat kecil pada data latih dengan nilai MAPE sebesar 0.3264% (MSE = 5.022054e+03), yang menandakan bahwa pemulusan mampu memfit data historis dengan sangat presisi karena penggunaan periode rata-rata yang singkat. Namun, ketika dievaluasi pada data uji, nilai galat meningkat signifikan dengan MAPE sebesar 2.9187% dan MSE membengkak menjadi 2.524550e+05 (SSE = 9.845744e+06). Peningkatan galat yang drastis pada data uji ini terjadi karena SMA meramalkan nilai konstan mendatar (flat forecast) berdasarkan rata-rata 2 periode terakhir data latih, sehingga tidak mampu mengantisipasi perubahan tren penurunan (downward trend) yang terjadi secara nyata pada periode data uji.
+
+## Double Moving Average (DMA)
+
+Metode Double Moving Average (DMA) dirancang khusus untuk mengatasi kelemahan SMA pada data yang memiliki komponen tren linear. Pemulusan dilakukan dua tahap (pemulusan atas hasil pemulusan pertama) untuk menghitung komponen intercept ($A_t$) dan slope ($B_t$).
+
+```{r}
+# 1. Pemulusan Tahap II & Komponen At, Bt (n = 2)
+dma <- SMA(data.sma, n = 2)
+At  <- 2 * data.sma - dma
+Bt  <- (2 / (2 - 1)) * (data.sma - dma)
+
+# 2. Pemulusan & Fitting Data Latih
+data.dma <- At + Bt
+data.ramal.dma <- c(NA, data.dma)
+```
+
+Peramalan $h$-periode ke depan untuk data uji dihitung secara dinamis mengikuti persamaan tren linier: $F_{t+h} = A_t + B_t \times h$.
+
+```{r}
+# 3. Peramalan 39 periode ke depan untuk data uji
+n_test <- length(test_ma.ts)
+f_dma  <- numeric(n_test)
+At_last <- At[length(At)]
+Bt_last <- Bt[length(Bt)]
+
+for (h in 1:n_test) {
+  f_dma[h] <- At_last + Bt_last * h
+}
+```
+
+Selanjutnya, hasil kalkulasi disatukan dalam satu matriks gabungan untuk plotting dan evaluasi galat.
+
+```{r}
+# 4. Penggabungan Data (Total 195 observasi)
+data.gab.dma <- cbind(
+  aktual     = c(data.ts),
+  pemulusan1 = c(data.sma, rep(NA, n_test)),
+  pemulusan2 = c(dma, rep(NA, n_test)),
+  At         = c(At, rep(NA, n_test)),
+  Bt         = c(Bt, rep(NA, n_test)),
+  ramalan    = c(data.ramal.dma, f_dma[-1])
+)
+```
+
+Grafik berikut menampilkan perbandingan data aktual dengan hasil pemulusan serta lintasan garis peramalan DMA.
+
+```{r}
+# 5. Visualisasi Plot DMA
+ts.plot(data.ts, xlab = "Time Period", ylab = "Kurs IDR to USD", main = "DMA N=2 Data Kurs")
+points(data.ts, cex = 0.5)
+lines(data.gab.dma[, "pemulusan2"], col = "green", lwd = 2)
+lines(data.gab.dma[, "ramalan"], col = "red", lwd = 2)
+legend("topleft", legend = c("Data Aktual", "Data Pemulusan 2", "Data Peramalan"), 
+       col = c("black", "green", "red"), lty = 1, lwd = 2, cex = 0.7)
+```
+
+Perhitungan matriks akurasi galat untuk metode DMA dievaluasi pada data latih (mulai indeks ke-4 karena adanya lag pemulusan ganda) dan data uji.
+
+```{r}
+# 6. Akurasi Data Latih (Evaluasi dimulai dari indeks n=4)
+error_train.dma  <- train_ma.ts - data.ramal.dma[1:n_train]
+SSE_train.dma    <- sum(error_train.dma[4:n_train]^2, na.rm = TRUE)
+MSE_train.dma    <- mean(error_train.dma[4:n_train]^2, na.rm = TRUE)
+MAPE_train.dma   <- mean(abs(error_train.dma[4:n_train] / train_ma.ts[4:n_train]) * 100, na.rm = TRUE)
+
+akurasi_train.dma <- matrix(c(SSE_train.dma, MSE_train.dma, MAPE_train.dma), 
+                            dimnames = list(c("SSE", "MSE", "MAPE (%)"), "Akurasi Train (n=2)"))
+
+# 7. Akurasi Data Uji
+error_test.dma  <- test_ma.ts - data.gab.dma[(n_train + 1):n, "ramalan"]
+SSE_test.dma    <- sum(error_test.dma^2)
+MSE_test.dma    <- mean(error_test.dma^2)
+MAPE_test.dma   <- mean(abs(error_test.dma / test_ma.ts) * 100)
+
+akurasi_test.dma <- matrix(c(SSE_test.dma, MSE_test.dma, MAPE_test.dma), 
+                           dimnames = list(c("SSE", "MSE", "MAPE (%)"), "Akurasi Test (n=2)"))
+
+# Tampilkan Tabel Akurasi DMA
+cbind(akurasi_train.dma, akurasi_test.dma)
+```
+
+Hasil evaluasi akurasi menunjukkan bahwa metode DMA ($n=2$) memberikan kinerja yang sangat baik pada data latih dengan nilai MAPE sebesar 0.3568% (MSE = 6.080032e+03), menandakan tingkat penyesuaian (fitting) yang sangat tinggi terhadap fluktuasi historis. Akan tetapi, pada data uji, nilai galat melonjak drastis dengan MAPE mencapai 13.2424% dan MSE sebesar 5.056215e+06 (SSE = 1.971924e+08). Lonjakan galat yang signifikan ini terjadi karena proyeksi tren linier DMA sangat sensitif terhadap kemiringan (slope) pada ujung periode data latih; ketika data uji justru berbalik arah mengalami tren penurunan (downward trend) yang kontras, garis peramalan linier DMA yang kaku menghasilkan deviasi yang semakin membesar di setiap periodenya.
+
+## Single Exponential Smoothing (SES)
+
+Metode Single Exponential Smoothing (SES) cocok untuk data stasioner tanpa pola tren atau musiman yang kuat, di mana bobot pengamatan menurun secara eksponensial. Dibandingkan dengan variasi parameter uji ($\alpha = 0.2$ dan $\alpha = 0.7$), digunakan pula pencarian parameter $\alpha$ optimal secara otomatis (SSE minimization).
+
+```{r}
+# 1. Pemulusan SES (alpha=0.2, alpha=0.7, dan alpha Optimum)
+ses.1   <- HoltWinters(train_ma.ts, gamma = FALSE, beta = FALSE, alpha = 0.2)
+ses.2   <- HoltWinters(train_ma.ts, gamma = FALSE, beta = FALSE, alpha = 0.7)
+ses.opt <- HoltWinters(train_ma.ts, gamma = FALSE, beta = FALSE, alpha = NULL)
+```
+
+Proyeksi 39 periode ke depan dihitung untuk masing-masing nilai $\alpha$.
+
+```{r}
+# 2. Peramalan 39 periode ke depan untuk Data Uji
+ramalan_ses1   <- forecast(ses.1, h = n_test)
+ramalan_ses2   <- forecast(ses.2, h = n_test)
+ramalan_sesopt <- forecast(ses.opt, h = n_test)
+```
+
+Grafik di bawah ini menggambarkan kurva fitted values dari nilai $\alpha$ optimum beserta batas peramalan pada data uji.
+
+```{r}
+# 3. Visualisasi Hasil Pemulusan & Peramalan SES Optimum
+plot(data.ts, main = "SES Optimum Data Kurs IDR to USD", xlab = "Time Period", ylab = "Kurs")
+lines(ses.opt$fitted[, 1], col = "blue", lty = 2)
+lines(ramalan_sesopt$mean, col = "red", lwd = 2)
+legend("topleft", legend = c("Data Aktual", "Fitted (Latih)", "Ramalan (Uji)"),
+       col = c("black", "blue", "red"), lty = c(1, 2, 1), lwd = c(1, 1, 2), cex = 0.7)
+```
+
+Pemeriksaan ukuran pemodelan galat dilakukan secara komparatif antara $\alpha = 0.2$, $\alpha = 0.7$, dan $\alpha$ optimum pada data latih serta data uji.
+
+```{r}
+# 4. Akurasi Data Latih (Manual)
+# alpha = 0.2
+sisaan_ses1 <- ramalan_ses1$residuals
+SSE_train.ses1  <- sum(sisaan_ses1[2:n_train]^2, na.rm = TRUE)
+MSE_train.ses1  <- SSE_train.ses1 / n_train
+RMSE_train.ses1 <- sqrt(MSE_train.ses1)
+MAPE_train.ses1 <- mean(abs(sisaan_ses1[2:n_train] / train_ma.ts[2:n_train]) * 100, na.rm = TRUE)
+
+# alpha = 0.7
+sisaan_ses2 <- ramalan_ses2$residuals
+SSE_train.ses2  <- sum(sisaan_ses2[2:n_train]^2, na.rm = TRUE)
+MSE_train.ses2  <- SSE_train.ses2 / n_train
+RMSE_train.ses2 <- sqrt(MSE_train.ses2)
+MAPE_train.ses2 <- mean(abs(sisaan_ses2[2:n_train] / train_ma.ts[2:n_train]) * 100, na.rm = TRUE)
+
+# alpha Optimum
+sisaan_sesopt <- ramalan_sesopt$residuals
+SSE_train.sesopt  <- sum(sisaan_sesopt[2:n_train]^2, na.rm = TRUE)
+MSE_train.sesopt  <- SSE_train.sesopt / n_train
+RMSE_train.sesopt <- sqrt(MSE_train.sesopt)
+MAPE_train.sesopt <- mean(abs(sisaan_sesopt[2:n_train] / train_ma.ts[2:n_train]) * 100, na.rm = TRUE)
+
+akurasi_train.ses <- matrix(
+  c(SSE_train.ses1, MSE_train.ses1, RMSE_train.ses1, MAPE_train.ses1,
+    SSE_train.ses2, MSE_train.ses2, RMSE_train.ses2, MAPE_train.ses2,
+    SSE_train.sesopt, MSE_train.sesopt, RMSE_train.sesopt, MAPE_train.sesopt),
+  nrow = 4, ncol = 3,
+  dimnames = list(c("SSE", "MSE", "RMSE", "MAPE (%)"), c("SES (a=0.2)", "SES (a=0.7)", "SES (Opt)"))
+)
+
+# 5. Akurasi Data Uji (Manual)
+selisih_ses1   <- as.numeric(ramalan_ses1$mean) - as.numeric(test_ma.ts)
+selisih_ses2   <- as.numeric(ramalan_ses2$mean) - as.numeric(test_ma.ts)
+selisih_sesopt <- as.numeric(ramalan_sesopt$mean) - as.numeric(test_ma.ts)
+
+SSE_test.ses1  <- sum(selisih_ses1^2)
+MSE_test.ses1  <- mean(selisih_ses1^2)
+RMSE_test.ses1 <- sqrt(MSE_test.ses1)
+MAPE_test.ses1 <- mean(abs(selisih_ses1 / test_ma.ts) * 100)
+
+SSE_test.ses2  <- sum(selisih_ses2^2)
+MSE_test.ses2  <- mean(selisih_ses2^2)
+RMSE_test.ses2 <- sqrt(MSE_test.ses2)
+MAPE_test.ses2 <- mean(abs(selisih_ses2 / test_ma.ts) * 100)
+
+SSE_test.sesopt  <- sum(selisih_sesopt^2)
+MSE_test.sesopt  <- mean(selisih_sesopt^2)
+RMSE_test.sesopt <- sqrt(MSE_test.sesopt)
+MAPE_test.sesopt <- mean(abs(selisih_sesopt / test_ma.ts) * 100)
+
+akurasi_test.ses <- matrix(
+  c(SSE_test.ses1, MSE_test.ses1, RMSE_test.ses1, MAPE_test.ses1,
+    SSE_test.ses2, MSE_test.ses2, RMSE_test.ses2, MAPE_test.ses2,
+    SSE_test.sesopt, MSE_test.sesopt, RMSE_test.sesopt, MAPE_test.sesopt),
+  nrow = 4, ncol = 3,
+  dimnames = list(c("SSE", "MSE", "RMSE", "MAPE (%)"), c("SES (a=0.2)", "SES (a=0.7)", "SES (Opt)"))
+)
+
+# Tampilkan Hasil Akurasi
+list(`Akurasi Data Latih SES` = akurasi_train.ses, `Akurasi Data Uji SES` = akurasi_test.ses)
+```
+Pada data latih, kinerja pemulusan SES meningkat seiring membesarnya nilai $\alpha$, di mana SES Optimum membuahkan hasil terbaik dengan galat terkecil (MAPE = 0.2703%, MSE = 3.457443e+03) karena nilai $\alpha$ yang tinggi memberikan bobot lebih besar pada pengamatan terbaru. Sebaliknya pada data uji, skenario SES ($\alpha = 0.2$) justru menghasilkan akurasi peramalan terbaik dengan nilai galat paling rendah (MAPE = 2.4974%, MSE = 1.810338e+05, RMSE = 425.48) dibandingkan SES ($\alpha = 0.7$) maupun SES Optimum. Pola ini menunjukkan bahwa pada peramalan jarak jauh $h$-periode ke depan yang menghasilkan garis ramalan mendatar (flat forecast), parameter $\alpha$ yang lebih stabil/rendah ($\alpha=0.2$) menahan proyeksi pada level rata-rata yang lebih proporsional terhadap tren penurunan data uji, sehingga terhindar dari overfitting pada titik puncak akhir data latih.
+
+## Double Exponential Smoothing (DES)
+
+Metode Double Exponential Smoothing (DES / Holt's Method) mengakomodasi pemulusan tingkat (level, $\alpha$) sekaligus tren (slope, $\beta$). Tiga skenario dicoba: Skenario 1 ($\alpha=0.2, \beta=0.2$), Skenario 2 ($\alpha=0.6, \beta=0.3$), dan DES dengan pencarian parameter optimal secara otomatis.
+
+```{r}
+# 1. Pemulusan DES (Skenario 1, Skenario 2, dan Optimum)
+des.1   <- HoltWinters(train_ma.ts, gamma = FALSE, beta = 0.2, alpha = 0.2)
+des.2   <- HoltWinters(train_ma.ts, gamma = FALSE, beta = 0.3, alpha = 0.6)
+des.opt <- HoltWinters(train_ma.ts, gamma = FALSE, beta = NULL, alpha = NULL)
+```
+
+Pemodelan dilanjutkan dengan meramal 39 periode data uji dari masing-masing skenario DES.
+
+```{r}
+# 2. Peramalan 39 periode ke depan untuk Data Uji
+ramalan_des1   <- forecast(des.1, h = n_test)
+ramalan_des2   <- forecast(des.2, h = n_test)
+ramalan_desopt <- forecast(des.opt, h = n_test)
+```
+
+Plot berikut menyajikan kesesuaian model DES Optimum pada data latih serta lintasan peramalan tren pada data uji.
+
+```{r}
+# 3. Visualisasi Hasil Pemulusan & Peramalan DES Optimum
+plot(data.ts, main = "DES Optimum Data Kurs IDR to USD", xlab = "Time Period", ylab = "Kurs")
+lines(des.opt$fitted[, 1], col = "blue", lty = 2)
+lines(ramalan_desopt$mean, col = "red", lwd = 2)
+legend("topleft", legend = c("Data Aktual", "Fitted (Latih)", "Ramalan (Uji)"),
+       col = c("black", "blue", "red"), lty = c(1, 2, 1), lwd = c(1, 1, 2), cex = 0.7)
+```
+
+Ukuran kebaikan model (SSE, MSE, RMSE, MAPE) dihitung untuk data latih dan data uji pada ketiga skenario DES.
+
+```{r}
+# 4. Akurasi Data Latih (Manual)
+# Skenario 1 (a=0.2, b=0.2)
+sisaan_des1 <- ramalan_des1$residuals
+SSE_train.des1  <- sum(sisaan_des1[3:n_train]^2, na.rm = TRUE)
+MSE_train.des1  <- SSE_train.des1 / n_train
+RMSE_train.des1 <- sqrt(MSE_train.des1)
+MAPE_train.des1 <- mean(abs(sisaan_des1[3:n_train] / train_ma.ts[3:n_train]) * 100, na.rm = TRUE)
+
+# Skenario 2 (a=0.6, b=0.3)
+sisaan_des2 <- ramalan_des2$residuals
+SSE_train.des2  <- sum(sisaan_des2[3:n_train]^2, na.rm = TRUE)
+MSE_train.des2  <- SSE_train.des2 / n_train
+RMSE_train.des2 <- sqrt(MSE_train.des2)
+MAPE_train.des2 <- mean(abs(sisaan_des2[3:n_train] / train_ma.ts[3:n_train]) * 100, na.rm = TRUE)
+
+# DES Optimum
+sisaan_desopt <- ramalan_desopt$residuals
+SSE_train.desopt  <- sum(sisaan_desopt[3:n_train]^2, na.rm = TRUE)
+MSE_train.desopt  <- SSE_train.desopt / n_train
+RMSE_train.desopt <- sqrt(MSE_train.desopt)
+MAPE_train.desopt <- mean(abs(sisaan_desopt[3:n_train] / train_ma.ts[3:n_train]) * 100, na.rm = TRUE)
+
+akurasi_train.des <- matrix(
+  c(SSE_train.des1, MSE_train.des1, RMSE_train.des1, MAPE_train.des1,
+    SSE_train.des2, MSE_train.des2, RMSE_train.des2, MAPE_train.des2,
+    SSE_train.desopt, MSE_train.desopt, RMSE_train.desopt, MAPE_train.desopt),
+  nrow = 4, ncol = 3,
+  dimnames = list(c("SSE", "MSE", "RMSE", "MAPE (%)"), c("DES (Ske 1)", "DES (Ske 2)", "DES (Opt)"))
+)
+
+# 5. Akurasi Data Uji (Manual)
+selisih_des1   <- as.numeric(ramalan_des1$mean) - as.numeric(test_ma.ts)
+selisih_des2   <- as.numeric(ramalan_des2$mean) - as.numeric(test_ma.ts)
+selisih_desopt <- as.numeric(ramalan_desopt$mean) - as.numeric(test_ma.ts)
+
+SSE_test.des1  <- sum(selisih_des1^2)
+MSE_test.des1  <- mean(selisih_des1^2)
+RMSE_test.des1 <- sqrt(MSE_test.des1)
+MAPE_test.des1 <- mean(abs(selisih_des1 / test_ma.ts) * 100)
+
+SSE_test.des2  <- sum(selisih_des2^2)
+MSE_test.des2  <- mean(selisih_des2^2)
+RMSE_test.des2 <- sqrt(MSE_test.des2)
+MAPE_test.des2 <- mean(abs(selisih_des2 / test_ma.ts) * 100)
+
+SSE_test.desopt  <- sum(selisih_desopt^2)
+MSE_test.desopt  <- mean(selisih_desopt^2)
+RMSE_test.desopt <- sqrt(MSE_test.desopt)
+MAPE_test.desopt <- mean(abs(selisih_desopt / test_ma.ts) * 100)
+
+akurasi_test.des <- matrix(
+  c(SSE_test.des1, MSE_test.des1, RMSE_test.des1, MAPE_test.des1,
+    SSE_test.des2, MSE_test.des2, RMSE_test.des2, MAPE_test.des2,
+    SSE_test.desopt, MSE_test.desopt, RMSE_test.desopt, MAPE_test.desopt),
+  nrow = 4, ncol = 3,
+  dimnames = list(c("SSE", "MSE", "RMSE", "MAPE (%)"), c("DES (Ske 1)", "DES (Ske 2)", "DES (Opt)"))
+)
+
+# Tampilkan Hasil Akurasi
+list(`Akurasi Data Latih DES` = akurasi_train.des, `Akurasi Data Uji DES` = akurasi_test.des)
+```
+
+Pada data latih, skenario DES Optimum menunjukkan performa pemodelan terbaik dengan tingkat galat paling rendah (MAPE = 0.2676%, MSE = 3.493386e+03, RMSE = 59.10) karena kombinasi parameter $\alpha$ dan $\beta$ berhasil disesuaikan secara otomatis untuk memfit pola level dan tren historis. Keunggulan DES Optimum ini konsisten berlanjut pada data uji dengan menghasilkan akurasi peramalan tertinggi dibanding skenario lainnya, dicirikan oleh nilai galat paling minimum (MAPE = 3.7333%, MSE = 4.003540e+05, RMSE = 632.74). Meskipun nilai MAPE pada data uji meningkat dibanding data latih akibat proyeksi tren linear yang kaku di tengah perubahan arah kurs, DES Optimum tetap terbukti lebih handal dan adaptif mengontrol penyimpangan ramalan dibandingkan skenario manual DES Skenario 1 ($\alpha=0.2, \beta=0.2$) maupun Skenario 2 ($\alpha=0.6, \beta=0.3$).
+
+## Holt-Winters
+
+Metode Holt-Winters digunakan apabila data memiliki komponen level, tren, sekaligus pola musiman (seasonal). Pada chunk ini, dibuat struktur data time series dengan frekuensi musiman buatan $frequency = 5$ (misalnya diasumsikan siklus 5 harian/mingguan). Dipisahkan antara pendekatan aditif (additive) dan multiplikatif (multiplicative).
+
+```{r}
+# 1. Penyiapan Time Series Berfrekuensi Musiman
+train_hw.ts <- ts(training_ma$Kurs, frequency = 5)
+test_hw.ts  <- ts(testing_ma$Kurs, frequency = 5)
+
+# 2. Pemulusan Holt-Winters Aditif & Multiplikatif (Optimum)
+hw_add.opt  <- HoltWinters(train_hw.ts, seasonal = "additive")
+hw_mult.opt <- HoltWinters(train_hw.ts, seasonal = "multiplicative")
+```
+
+Peramalan untuk 39 periode dilakukan berdasarkan estimasi parameter Holt-Winters aditif dan multiplikatif.
+
+```{r}
+# 3. Peramalan 39 periode ke depan
+ramalan_hw_add  <- forecast(hw_add.opt, h = n_test)
+ramalan_hw_mult <- forecast(hw_mult.opt, h = n_test)
+```
+
+Langkah berikutnya adalah menghitung indikator ukuran kebaikan pemodelan galat Holt-Winters pada data uji.
+
+```{r}
+# 4. Akurasi Data Uji Holt-Winters
+selisih_hw_add  <- as.numeric(ramalan_hw_add$mean) - as.numeric(test_hw.ts)
+selisih_hw_mult <- as.numeric(ramalan_hw_mult$mean) - as.numeric(test_hw.ts)
+
+SSE_test.hw_add  <- sum(selisih_hw_add^2)
+MSE_test.hw_add  <- mean(selisih_hw_add^2)
+RMSE_test.hw_add <- sqrt(MSE_test.hw_add)
+MAPE_test.hw_add <- mean(abs(selisih_hw_add / test_hw.ts) * 100)
+
+SSE_test.hw_mult  <- sum(selisih_hw_mult^2)
+MSE_test.hw_mult  <- mean(selisih_hw_mult^2)
+RMSE_test.hw_mult <- sqrt(MSE_test.hw_mult)
+MAPE_test.hw_mult <- mean(abs(selisih_hw_mult / test_hw.ts) * 100)
+
+akurasi_test.hw <- matrix(
+  c(SSE_test.hw_add, MSE_test.hw_add, RMSE_test.hw_add, MAPE_test.hw_add,
+    SSE_test.hw_mult, MSE_test.hw_mult, RMSE_test.hw_mult, MAPE_test.hw_mult),
+  nrow = 4, ncol = 2,
+  dimnames = list(c("SSE", "MSE", "RMSE", "MAPE (%)"), c("HW Aditif Opt", "HW Multiplikatif Opt"))
+)
+
+# Tampilkan Hasil Akurasi Data Uji Holt-Winters
+akurasi_test.hw
+```
+
+Hasil evaluasi akurasi pada data uji menunjukkan bahwa Holt-Winters Multiplikatif Optimum memberikan kinerja peramalan yang sedikit lebih presisi dibandingkan dengan Holt-Winters Aditif Optimum. Metode multiplikatif menghasilkan nilai galat yang lebih rendah di seluruh indikator evaluasi dengan MAPE sebesar 4.3026% (MSE = 5.361700e+05, RMSE = 732.24) berbanding 4.3237% pada metode aditif. Keunggulan tipis pada pendekatan multiplikatif ini mengindikasikan bahwa variasi fluktuasi musiman buatan ($frequency = 5$) pada data kurs cenderung berubah secara proporsional mengikuti perubahan tingkat level data, meskipun secara umum kedua model memberikan estimasi akurasi yang relatif seimbang pada kisaran MAPE 4.3%.
+
+## Perbandingan Seluruh Metode Pemulusan
+
+Tabel ringkasan gabungan di bawah ini merangkum ukuran galat (SSE, MSE, RMSE, dan MAPE) dari metode pemulusan terbaik pada masing-masing kelompok pada data uji.
+
+```{r}
+# Penggabungan nilai akurasi data uji dari metode terbaik masing-masing
+perbandingan_semua <- data.frame(
+  Metode = c("SMA (n=2)", "DMA (n=2)", "SES Optimum", "DES Optimum", "Holt-Winters Aditif Opt"),
+  SSE  = c(SSE_test.sma, SSE_test.dma, SSE_test.sesopt, SSE_test.desopt, SSE_test.hw_add),
+  MSE  = c(MSE_test.sma, MSE_test.dma, MSE_test.sesopt, MSE_test.desopt, MSE_test.hw_add),
+  RMSE = c(sqrt(MSE_test.sma), sqrt(MSE_test.dma), RMSE_test.sesopt, RMSE_test.desopt, RMSE_test.hw_add),
+  `MAPE (%)` = c(MAPE_test.sma, MAPE_test.dma, MAPE_test.sesopt, MAPE_test.desopt, MAPE_test.hw_add),
+  check.names = FALSE
+)
+
+knitr::kable(perbandingan_semua, digits = 4, caption = "Ringkasan Perbandingan Akurasi Data Uji Seluruh Metode")
+```
+
+Berdasarkan perbandingan akurasi pada data uji dari seluruh metode pemulusan, Single Moving Average (SMA $n=2$) berhasil menjadi metode terbaik dengan tingkat galat terendah, yaitu nilai MAPE sebesar 2.9187%, MSE sebesar 252.4550, dan RMSE sebesar 502.4490. Di posisi kedua, metode SES Optimum memberikan kinerja terdekat dengan MAPE 3.1954%, diikuti oleh DES Optimum (MAPE 3.7333%), Holt-Winters Aditif Opt (MAPE 4.3237%), dan yang paling tidak akurat adalah DMA ($n=2$) dengan galat melonjak hingga MAPE 13.2424%. Keunggulan metode pemulusan sederhana seperti SMA dan SES dibanding metode bertren (DMA/DES) pada data uji ini disebabkan oleh karakter ramalannya yang konstan mendatar (flat line); proyeksi ini secara kebetulan menahan lonjakan galat di tengah perubahan arah tren kurs yang drastis pada data uji, sehingga menjadikannya model yang paling presisi dan handal untuk meramalkan kurs IDR to USD pada kasus data ini.
+
+## Kesimpulan
+Berdasarkan hasil analisis dan evaluasi kinerja peramalan data nilai tukar kurs IDR terhadap USD, metode Single Moving Average (SMA $n=2$) terpilih sebagai metode pemulusan terbaik dengan tingkat akurasi tertinggi pada data uji, dicirikan oleh nilai galat terendah (MAPE = 2,9187%, MSE = 252.4550, dan RMSE = 502.4490). Meskipun data historis pada periode latih menunjukkan dinamika tren naik yang kuat, pergerakan data uji yang berbalik arah (turning point) menuju tren penurunan menyebabkan metode pemulusan bertren seperti DMA dan DES menghasilkan deviasi proyeksi yang tinggi. Karakter peramalan konstan mendatar (flat forecast) pada metode pemulusan sederhana seperti SMA dan SES terbukti lebih unggul dan stabil dalam menahan pembengkakan galat di tengah perubahan arah tren yang drastis, sehingga SMA ($n=2$) menjadi model yang paling presisi dan handal untuk memprediksi pergerakan kurs pada periode data uji ini.
