@@ -1,0 +1,317 @@
+---
+title: "Tugas 2 Praktikum"
+author: "Intan Aisa M0401241059"
+date: "2026-09-01"
+output: html_document
+---
+
+```{r message=FALSE, warning=FALSE}
+library(lmtest)
+library(orcutt)
+library(ggplot2)
+library (dplyr)
+library(readxl)
+library(HoRM)
+```
+
+# No 1: Analisis Market Share vs Price
+
+## 1.1 Impor dan Praproses Data
+
+Langkah pertama adalah membaca data `data_market_share_price.xlsx`, membuang peubah `Period`, serta me-rename peubah `Market share` menjadi $Y$ (respon) dan `Price` menjadi $X$ (penjelas).
+
+```{r}
+df1 <- read_excel("/Users/intanaisa/Documents/Kuliah/Semester 5/Metode Peramalan Deret Waktu/Praktikum/Praktikum 2/data_market_share_price.xlsx")
+df1
+```
+
+```{r}
+data1 <- df1 %>%
+  select(-Period) %>%
+  rename(Y = `Market share`, 
+         X = Price)
+```
+
+## 1.2 Pemodelan Awal (OLS)
+
+Model regresi linear awal dibentuk dengan fungsi `lm()`.
+
+```{r}
+model_awal1 <- lm(Y ~ X, data = data1)
+summary(model_awal1)
+```
+Berdasarkan hasil pemodelan awal OLS, peubah harga ($X$) terbukti berpengaruh negatif dan signifikan secara statistik terhadap pangsa pasar ($Y$) dengan nilai $p\text{-value} < 0.05$. Hasil uji F juga menunjukkan bahwa model regresi ini layak digunakan secara simultan. Selain itu, nilai Adjusted R-squared sebesar $0.9484$ mengindikasikan bahwa $94.84\%$ keragaman pangsa pasar mampu dijelaskan oleh peubah harga, sementara sisanya dipengaruhi oleh faktor lain di luar model.
+
+## 1.3 Uji Asumsi Sisaan Secara Eksploratif
+
+Sebelum melakukan inferensi lebih jauh, dilakukan uji diagnostik sisaan menggunakan 4 plot utama: Q-Q Plot Normal, Sisaan vs Fitted Values, Histogram Sisaan, dan Sisaan vs Order (Waktu).
+
+```{r}
+#sisaan dan fitted value
+sisaan <- residuals(model_awal1)
+fitValue <- predict(model_awal1)
+n <- length(sisaan)
+
+par(mfrow = c(2,2))
+qqnorm(sisaan)
+qqline(sisaan, col = "steelblue", lwd = 2)
+
+plot(fitValue, sisaan, col = "steelblue", pch = 20, xlab = "Fitted Values", ylab = "Sisaan", main = "Sisaan vs Fitted Values")
+abline(h = 0, col = "red", lwd = 2)
+
+hist(sisaan, col = "steelblue", main = "Histogram Sisaan")
+
+# Sumbu X menggunakan 1:n agar sesuai dengan panjang data sisaan
+plot(1:n, sisaan, col = "steelblue", pch = 20, type = "b", xlab = "Order/Time", ylab = "Sisaan", main = "Sisaan vs Order")
+abline(h = 0, col = "red", lwd = 2)
+par(mfrow = c(1,1))
+```
+Berdasarkan plot diagnostik eksploratif, sebaran titik-titik pada Normal Q-Q Plot yang menempel rapat pada garis diagonal serta bentuk Histogram Sisaan yang relatif simetris mengindikasikan bahwa sisaan berdistribusi normal. Pada plot Sisaan vs Fitted Values, titik-titik menyebar secara acak di sekitar garis nol tanpa membentuk pola tertentu, yang menandakan terpenuhinya asumsi kehomogenan ragam (homoskedastisitas). Namun, pada plot Sisaan vs Order terlihat adanya pergerakan menyatu dan gelombang beruntun sepanjang waktu ($t=1$ hingga $t=20$), yang menjadi indikasi awal hadirnya masalah autokorelasi positif pada sisaan.
+
+## 1.4 Uji Asumsi Sisaan secara Formal
+
+### A. Uji Normalitas (Shapiro-Wilk)
+
+$H_0$: Sisaan menyebar normal
+
+$H_1$: Sisaan tidak menyebar normal
+
+```{r}
+shapiro.test(residuals(model_awal1))
+```
+Nilai $p\text{-value} > 0.05$, sehingga $H_0$ tidak ditolak, artinya asumsi normalitas sisaan terpenuhi.
+
+### B. Uji Homoskedastisitas (Breusch-Pagan)
+
+$H_0$: Ragam sisaan homogen
+
+$H_1$: Ragam tidak sisaan homogen
+
+```{r}
+bptest(model_awal1)
+```
+Nilai $p\text{-value} > 0.05$, sehingga $H_0$ tidak ditolak, artinya asumsi kehomogenan ragam sisaan terpenuhi.
+
+### C. Uji Autokorelasi (Durbin-Watson)
+
+$H_0$: Tidak ada autokorelasi positif pada sisaan ($\rho = 0$)
+
+$H_1$: Ada autokorelasi positif pada sisaan ($\rho > 0$)
+
+```{r}
+dwtest(model_awal1)
+```
+Nilai $p\text{-value} < 0.05$, sehingga $H_0$ ditolak. Hal ini membuktikan bahwa terdapat autokorelasi pada sisaan model OLS awal. Oleh karena itu, diperlukan penanganan autokorelasi.
+
+## 1.5 Penanganan Autokorelasi
+
+### Metode 1: Cochrane-Orcutt
+
+Metode Cochrane-Orcutt melakukan iterasi untuk mengestimasi nilai $\rho$ dan memutakhirkan parameter regresi melalui transformasi perbedaan terbobot (*weighted diferencing*).
+
+```{r}
+model_orcutt1 <- cochrane.orcutt(model_awal1)
+summary(model_orcutt1)
+```
+
+Selanjutnya, lakukan uji Durbin-Watson kembali pada model Cochrane-Orcutt untuk memastikan autokorelasi telah teratasi
+
+```{r}
+dwtest(model_orcutt1)
+```
+Setelah ditangani dengan Cochrane-Orcutt, statistik Durbin-Watson mendakati nilai 2 dan nilai $p$-value $> 0.05$. Ini menunjukkan bahwa autokorelasi telah berhasil diatasi.
+
+### Metode 2: Hildreth-Lu
+
+Metode Hildreth-Lu mencari nilai $\rho$ optimum dalam selang $(-1, 1)$ yang meminimumkan nilai Sum of Squared Errors (SSE).
+
+```{r}
+hildreth.lu.func <- function(r, model){
+  x <- model.matrix(model)[,-1]
+  y <- model.response(model.frame(model))
+  n <- length(y)
+  t <- 2:n
+  y_star <- y[t] - r * y[t-1]
+  x_star <- x[t] - r * x[t-1]
+  return(lm(y_star ~ x_star))
+}
+
+r1 <- seq(-0.99, 0.99, by = 0.01)
+tab1 <- data.frame(
+  "rho" = r1, 
+  "SSE" = sapply(r1, function(i){ deviance(hildreth.lu.func(i, model_awal1)) })
+)
+
+rho_kasar1 <- tab1$rho[which.min(tab1$SSE)]
+
+rOpt1 <- seq(rho_kasar1 - 0.05, rho_kasar1 + 0.05, by = 0.001)
+tabOpt1 <- data.frame(
+  "rho" = rOpt1, 
+  "SSE" = sapply(rOpt1, function(i){ deviance(hildreth.lu.func(i, model_awal1)) })
+)
+
+plot(tab1$SSE ~ tab1$rho, type = "l", xlab = "Rho", ylab = "SSE", main = "Grafik SSE vs Rho (No 1)")
+rho_opt1 <- tabOpt1$rho[which.min(tabOpt1$SSE)]
+abline(v = rho_opt1, col = "red", lty = 2, lwd = 2)
+
+rho_opt1
+```
+
+Nilai $\rho$ Optimum Hildreth-Lu: Nilai $\rho$ yang meminimumkan SSE adalah `r rho_opt1`.
+
+Selanjutnya bentuk model Hildreth-Lu menggunakan $\rho$ optimum tersebut dan mengecek uji Durbin-Watson:
+
+```{r}
+modelHL1 <- hildreth.lu.func(rho_opt1, model_awal1)
+summary(modelHL1)
+```
+
+```{r}
+dwtest(modelHL1)
+```
+Nilai $p$-value dari Uji Durbin-Watson $> 0.05$, mengindikasikan bahwa model Hildreth-Lu juga berhasil menghilangkan masalah autokorelasi.
+
+## 1.6 Kesimpulan
+
+1. Model awal OLS mengalami masalah autokorelasi ($p$-value DW $< 0.05$), meskipun asumsi normalitas dan homoskedastisitas terpenuhi.
+
+2. Penanganan menggunakan metode Cochrane-Orcutt maupun Hildreth-Lu terbukti efektif membebaskan model dari autokorelasi ($p$-value DW $> 0.05$).
+
+3. Model akhir yang bebas dari autokorelasi dapat digunakan untuk keperluan pendugaan dan peramalan Market Share berdasarkan Price secara lebih valid karena standar erornya tidak lagi underestimated.
+
+
+# Nomor 2: Analisis Sales vs Advertising (1975-2014)
+
+## 2.1 Impor dan Praproses Data
+
+Pada studi kasus kedua, dilakukan analisis pengaruh biaya iklan (Advertising) terhadap tingkat penjualan (Sales) periode 1975–2014.
+
+```{r}
+df2 <- read_excel("/Users/intanaisa/Documents/Kuliah/Semester 5/Metode Peramalan Deret Waktu/Praktikum/Praktikum 2/data_sales_advertising_1975_2014.xlsx")
+df2
+```
+
+```{r}
+data2 <- df2 %>%
+  select(-Year) %>%
+  rename(Y = Sales, 
+         X = Advertising)
+```
+
+## 2.2 Pemodelan Awal (OLS)
+```{r}
+model_awal2 <- lm(Y ~ X, data = data2)
+summary(model_awal2)
+```
+Berdasarkan hasil pemodelan awal OLS, peubah biaya iklan ($X$) terbukti berpengaruh positif dan sangat signifikan secara statistik terhadap tingkat penjualan ($Y$) dengan nilai $p\text{-value} < 2 \times 10^{-16}$. Hasil uji F dengan statistik $902.3$ juga mengonfirmasi bahwa model regresi ini sangat layak secara simultan. Selain itu, nilai Adjusted R-squared sebesar $0.9585$ menunjukkan bahwa sebesar $95.85\%$ keragaman penjualan mampu dijelaskan oleh biaya iklan, sedangkan sisanya dipengaruhi oleh variabel lain di luar model.
+
+## 2.3 Uji Asumsi Sisaan Secara Eksploratif
+
+Sebelum melangkah ke uji formal, dilakukan pemeriksaan asumsi sisaan secara eksploratif menggunakan empat plot diagnostik.
+
+```{r}
+sisaan2 <- residuals(model_awal2)
+fitValue2 <- predict(model_awal2)
+n2 <- length(sisaan2)
+
+par(mfrow = c(2,2))
+qqnorm(sisaan2)
+qqline(sisaan2, col = "steelblue", lwd = 2)
+
+plot(fitValue2, sisaan2, col = "steelblue", pch = 20, xlab = "Fitted Values", ylab = "Sisaan", main = "Sisaan vs Fitted Values")
+abline(h = 0, col = "red", lwd = 2)
+
+hist(sisaan2, col = "steelblue", main = "Histogram Sisaan")
+
+plot(1:n2, sisaan2, col = "steelblue", pch = 20, type = "b", xlab = "Order/Time", ylab = "Sisaan", main = "Sisaan vs Order")
+abline(h = 0, col = "red", lwd = 2)
+par(mfrow = c(1,1))
+```
+Berdasarkan plot diagnostik di atas, titik-titik pada Normal Q-Q Plot cenderung mengikuti garis diagonal dan Histogram Sisaan menunjukkan sebaran yang cukup menyebar di sekitar nilai nol, mengindikasikan bahwa asumsi normalitas sisaan relatif terpenuhi. Namun, pada plot Sisaan vs Fitted Values serta Sisaan vs Order terlihat pola kurva melengkung (parabolik) yang sangat jelas, di mana sisaan bernilai negatif di awal, naik menjadi positif di tengah, lalu turun kembali menjadi negatif. Pola sistematis yang berurutan mengikuti waktu (t=1 hingga t=40) ini menunjukkan adanya indikasi kuat pelanggaran asumsi autokorelasi positif serta potensi adanya ketidaksesuaian bentuk linier pada model awal.
+
+## Uji Asumsi Sisaan Secara Formal
+
+### A. Uji Normalitas (Shapiro-Wilk)
+```{r}
+shapiro.test(residuals(model_awal2))
+```
+$p$-value $< 0.05$, maka sisaan tidak berdistribusi normal.
+
+### B. Uji Homoskedastisitas (Breusch-Pagan)
+```{r}
+bptest(model_awal2)
+```
+$p$-value $> 0.05$, maka ragam sisaan homogen (homoskedastisitas terpenuhi).
+
+### C. Uji Autokorelasi (Durbin-Watson)
+```{r}
+dwtest(model_awal2)
+```
+Nilai $p$-value $< 0.05$, yang berarti $H_0$ ditolak. Terbukti secara formal bahwa terdapat autokorelasi pada model OLS awal.
+
+## 2.5 Penanganan Autokorelasi
+
+### Metode 1: Cochrane-Orcutt
+```{r}
+model_orcutt2 <- cochrane.orcutt(model_awal2)
+summary(model_orcutt2)
+```
+
+Uji ulang Durbin-Watson setelah penanganan Cochrane-Orcutt:
+
+```{r}
+dwtest(model_orcutt2)
+```
+$p$-value Uji DW $> 0.05$. Masalah autokorelasi telah berhasil diatasi menggunakan transformasi Cochrane-Orcutt.
+
+### Metode 2: Hildreth-Lu
+```{r}
+hildreth.lu.func <- function(r, model){
+  x <- model.matrix(model)[,-1]
+  y <- model.response(model.frame(model))
+  n <- length(y)
+  t <- 2:n
+  y_star <- y[t] - r * y[t-1]
+  x_star <- x[t] - r * x[t-1]
+  return(lm(y_star ~ x_star))
+}
+
+r2 <- seq(-0.99, 0.99, by = 0.01)
+tab2 <- data.frame(
+  "rho" = r2, 
+  "SSE" = sapply(r2, function(i){ deviance(hildreth.lu.func(i, model_awal2)) })
+)
+
+rho_kasar2 <- tab2$rho[which.min(tab2$SSE)]
+
+rOpt2 <- seq(rho_kasar2 - 0.05, rho_kasar2 + 0.05, by = 0.001)
+tabOpt2 <- data.frame(
+  "rho" = rOpt2, 
+  "SSE" = sapply(rOpt2, function(i){ deviance(hildreth.lu.func(i, model_awal2)) })
+)
+
+plot(tab2$SSE ~ tab2$rho, type = "l", xlab = "Rho", ylab = "SSE", main = "Grafik SSE vs Rho (No 2)")
+rho_opt2 <- tabOpt2$rho[which.min(tabOpt2$SSE)]
+abline(v = rho_opt2, col = "red", lty = 2, lwd = 2)
+
+rho_opt2
+```
+Nilai $\rho$ Optimum Hildreth-Lu: Nilai $\rho$ terbaik adalah `r rho_opt2`.
+
+Estimasi model akhir Hildreth-Lu dan cek Durbin-Watson:
+```{r}
+modelHL2 <- hildreth.lu.func(rho_opt2, model_awal2)
+summary(modelHL2)
+```
+
+```{r}
+dwtest(modelHL2)
+```
+Nilai $p$-value Uji DW $> 0.05$, mengindikasikan metode Hildreth-Lu juga sukses menghilangkan autokorelasi.
+
+## Kesimpulan
+1. Pemodelan awal Sales terhadap Advertising menghasilkan residual yang terautokorelasi ($p$-value DW $< 0.05$), meskipun asumsi kehomogenan ragam dan kebebasan sebaran normal tetap terpenuhi.
+
+2. Penanganan dengan metode Cochrane-Orcutt dan Hildreth-Lu berhasil mengatasi autokorelasi tersebut, menghasilkan estimasi koefisien yang lebih andal dengan standard error yang konsisten.
+
+3. Model penanganan ini layak digunakan untuk memprediksi besaran penjualan (Sales) masa depan berdasarkan pengeluaran iklan (Advertising).
