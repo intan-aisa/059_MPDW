@@ -1,0 +1,468 @@
+---
+title: "Tugas Praktikum 6 dan 7"
+author: "Intan Aisa M0401241059"
+date: "2026-09-30"
+output: html_document
+---
+
+# 1 Packages
+
+```{r message=FALSE, warning=FALSE}
+library(ggplot2)
+library(tsibble)
+library(tseries)
+library(MASS)
+library(forecast)
+library(TSA)
+library(TTR)
+library(aTSA)
+library(graphics)
+library(nortest)
+```
+
+# 2 Data
+
+Data yang digunakan adalah data kurs JISDOR harian (Agustus 2022 - Mei 2023).
+
+```{r}
+datakurs <- rio::import("/Users/intanaisa/Documents/Kuliah/Semester 5/Metode Peramalan Deret Waktu/Praktikum/Pertemuan 6 & 7/Data.xlsx")
+head(datakurs)
+datakurs.ts <- ts(datakurs$Kurs)
+```
+
+# 3 Eksplorasi Data
+
+## 3.1 Plot Data
+
+```{r}
+plot.ts(datakurs.ts,
+        lty = 1,
+        xlab = "Waktu",
+        ylab = "Kurs",
+        main = "Plot Data Kurs")
+```
+
+Berdasarkan plot data deret waktu, terlihat bahwa data tidak bergerak di sekitar nilai tengah tertentu. Kurs naik dari sekitar 14.800 hingga mencapai puncak sekitar 15.700, bertahan di level tinggi, turun tajam, naik kembali, lalu turun hingga sekitar 14.630 mendekati akhir periode (nilai terakhir sekitar 14.800). Tidak terlihat pola musiman yang berulang. Berdasarkan pola data, pembagian data latih dan data uji ditetapkan dengan proporsi 80:20, yaitu 156 data latih dan 39 data uji.
+
+## 3.2 Pembagian Data Latih dan Data Uji
+
+```{r}
+n       <- length(datakurs.ts)
+n.train <- round(0.8 * n)     
+
+kurstrain <- datakurs$Kurs[1:n.train]
+kurstest  <- datakurs$Kurs[(n.train + 1):n]
+
+train.ts <- ts(kurstrain)
+test.ts  <- ts(kurstest)
+
+c(Total = n, Train = length(train.ts), Test = length(test.ts))
+```
+
+## 3.3 Plot Data Latih
+
+```{r}
+plot.ts(train.ts, lty = 1, xlab = "waktu", ylab = "Kurs",
+        main = "Plot Kurs Train")
+```
+
+Berdasarkan plot data latih, terlihat bahwa data memiliki tren naik pada awal periode, kemudian turun tajam, dan tidak bergerak pada nilai tengah tertentu. Hal ini mengindikasikan bahwa data tidak stasioner dalam rataan.
+
+## 3.4 Plot Data Uji
+
+```{r}
+plot.ts(test.ts, lty = 1, xlab = "waktu", ylab = "Kurs",
+        main = "Plot Kurs Test")
+```
+
+# 4 Uji Stasioneritas Data
+
+## 4.1 Stasioneritas dalam Ragam
+
+### 4.1.1 Plot Box-Cox
+
+```{r}
+index <- seq(1:length(train.ts))
+
+# Box-Cox
+bc <- boxcox(train.ts ~ index, lambda = seq(-5, 5, by = 0.1))
+
+# Nilai lambda optimum
+lambda_opt <- bc$x[which.max(bc$y)]
+lambda_opt
+
+# Selang kepercayaan 95% untuk lambda
+ci_lambda <- bc$x[bc$y > max(bc$y) - 0.5 * qchisq(0.95, df = 1)]
+
+# Batas bawah dan batas atas
+ci_lower <- min(ci_lambda)
+ci_upper <- max(ci_lambda)
+
+c(Batas_Bawah = ci_lower, Batas_Atas = ci_upper)
+```
+
+Nilai \(\lambda\) optimum sebesar -2,1 dengan selang kepercayaan 95% berada pada -5 hingga 5, yaitu seluruh rentang nilai \(\lambda\) yang dicoba. Selang tersebut sama dengan seluruh rentang grid sehingga tidak ada bukti yang cukup untuk melakukan transformasi, maka data dianggap stasioner dalam ragam.
+
+## 4.2 Stasioneritas dalam Rataan
+
+### 4.2.1 Plot ACF
+
+```{r}
+acf(train.ts)
+```
+
+Berdasarkan plot ACF, terlihat bahwa nilai autokorelasi menurun secara perlahan (*tails off slowly*) dan seluruh lag yang ditampilkan berada di luar batas signifikansi. Hal ini menjadi indikasi bahwa data tidak stasioner dalam rataan.
+
+### 4.2.2 Uji ADF
+
+```{r}
+tseries::adf.test(train.ts)
+```
+
+$H_0$ : Data tidak stasioner dalam rataan
+
+$H_1$ : Data stasioner dalam rataan
+
+Berdasarkan uji ADF tersebut, didapat *p-value* sebesar 0.8332 yang lebih besar dari taraf nyata 5% sehingga tak tolak $H_0$ dan menandakan bahwa data tidak stasioner dalam rataan. Hal ini sesuai dengan hasil eksplorasi menggunakan plot deret waktu dan plot ACF, sehingga ketidakstasioneran harus ditangani terlebih dahulu.
+
+# 5 Penanganan Ketidakstasioneran Data
+
+## 5.1 Differencing
+
+```{r}
+# Differencing pertama
+train.diff <- diff(train.ts, differences = 1)
+
+# Plot hasil differencing
+plot.ts(train.diff, lty = 1, xlab = "waktu",
+        ylab = "Data Difference 1 Kurs", main = "Plot Difference Kurs")
+```
+
+Berdasarkan plot data deret waktu, terlihat bahwa data hasil differencing sudah stasioner dalam rataan, ditandai dengan data bergerak di sekitar nilai tengah tertentu (tidak terdapat tren).
+
+### 5.1.1 Plot ACF
+
+```{r}
+acf(train.diff)
+```
+
+ACF tidak lagi menurun lambat dan hanya lag 1 yang signifikan, menandakan data sudah stasioner dalam rataan
+
+### 5.1.2 Uji ADF
+
+```{r}
+tseries::adf.test(train.diff)
+```
+
+$H_0$ : Data tidak stasioner dalam rataan
+
+$H_1$ : Data stasioner dalam rataan
+
+Berdasarkan uji ADF tersebut, didapat *p-value* ≤ 0.01 yang lebih kecil dari taraf nyata 5% sehingga tolak $H_0$. Data sudah stasioner dalam rataan setelah differencing satu kali (d = 1) dan dapat dilanjutkan ke pemodelan.
+
+## 5.2 Pengecekan Ragam Setelah Differencing
+
+```{r}
+index_diff <- seq(1:length(train.diff))
+
+# Cek nilai negatif/nol; jika ada, geser data agar bernilai positif
+min_val <- min(train.diff)
+
+if (min_val <= 0) {
+  shift_const <- abs(min_val) + 1
+  train.diff_shifted <- train.diff + shift_const
+} else {
+  train.diff_shifted <- train.diff
+}
+
+# Plot Box-Cox pada data yang sudah di-shift
+bc_diff <- boxcox(train.diff_shifted ~ index_diff, lambda = seq(-5, 5, by = 0.1))
+
+# Nilai lambda optimum
+lambda_opt_diff <- bc_diff$x[which.max(bc_diff$y)]
+print(paste("Lambda optimum setelah diff:", lambda_opt_diff))
+
+# Selang kepercayaan 95% untuk lambda
+ci_lambda_diff <- bc_diff$x[bc_diff$y > max(bc_diff$y) - 0.5 * qchisq(0.95, df = 1)]
+
+c(Batas_Bawah = min(ci_lambda_diff), Batas_Atas = max(ci_lambda_diff))
+```
+
+Pada data hasil differencing (yang telah digeser agar bernilai positif), \(\lambda\) optimum sebesar 1,5 dengan selang kepercayaan 95% dari 1,3 hingga 1,8 sehingga selang tidak memuat nilai satu. Namun, pengecekan ini dilakukan terhadap data yang telah digeser dengan suatu konstanta, sehingga hasilnya bergantung pada besar konstanta tersebut dan kurang dapat diandalkan. Pada data latih (sebelum differencing) tidak ada bukti yang cukup untuk melakukan transformasi. Oleh karena itu, tidak dilakukan transformasi dan pemodelan dilanjutkan dengan data differencing tanpa transformasi.
+
+# 6 Identifikasi Model
+
+## 6.1 Plot ACF
+
+```{r}
+acf(train.diff)
+```
+
+Plot ACF cenderung *cuts off* pada lag ke-1 (hanya lag ke-1 yang melewati batas signifikansi), sehingga jika plot PACF dianggap *tails off*, maka model tentatifnya adalah ARIMA(0,1,1).
+
+## 6.2 Plot PACF
+
+```{r}
+pacf(train.diff)
+```
+
+Plot PACF cenderung *cuts off* pada lag ke-1, sehingga jika plot ACF dianggap *tails off*, maka model tentatifnya adalah ARIMA(1,1,0). Lag ke-7 hanya sedikit melewati batas signifikansi dan dianggap kebetulan (satu dari sekitar 20 lag), sehingga tidak diperhitungkan. Jika ACF dan PACF keduanya dianggap *tails off*, maka model yang terbentuk adalah ARIMA(1,1,1).
+
+## 6.3 Plot EACF
+
+```{r}
+eacf(train.diff)
+```
+
+Identifikasi model menggunakan EACF dilakukan dengan melihat ujung segitiga pola nol (simbol “o”). Model tentatif yang terbentuk adalah ARIMA(0,1,1) dan ARIMA(1,1,2). Selain itu, ARIMA(2,1,2) ditambahkan sebagai pembanding dengan orde yang lebih tinggi. Secara keseluruhan terdapat lima model tentatif: ARIMA(0,1,1), ARIMA(1,1,0), ARIMA(1,1,1), ARIMA(1,1,2), dan ARIMA(2,1,2).
+
+# 7 Pendugaan Parameter Model
+
+Karena train.diff sudah didiferensi satu kali, nilai d pada Arima() diisi 0, sehingga Arima(train.diff, order = c(p,0,q)) setara dengan ARIMA(p,1,q) pada data asli. Sebelum menduga model-model tentatif, dilakukan uji signifikansi intercept (drift) terlebih dahulu.
+
+## 7.1 ARIMA(0,1,1)
+
+```{r}
+model1.da = Arima(train.diff, order = c(0,0,1), include.mean = FALSE, method = "ML")
+summary(model1.da)
+lmtest::coeftest(model1.da)
+```
+
+Intercept tidak signifikan (p-value 0,4995 lebih besar dari taraf nyata 5%), sehingga seluruh model tentatif berikut diduga tanpa intercept (include.mean = FALSE).
+
+## 7.2 ARIMA(1,1,0)
+
+```{r}
+model2.da = Arima(train.diff, order = c(1,0,0), include.mean = FALSE, method = "ML")
+summary(model2.da)
+lmtest::coeftest(model2.da)
+```
+
+## 7.3 ARIMA(1,1,1)
+
+```{r}
+model3.da = Arima(train.diff, order = c(1,0,1), include.mean = FALSE, method = "ML")
+summary(model3.da)
+lmtest::coeftest(model3.da)
+```
+
+## 7.4 ARIMA(1,1,2)
+
+```{r}
+model4.da = Arima(train.diff, order = c(1,0,2), include.mean = FALSE, method = "ML")
+summary(model4.da)
+lmtest::coeftest(model4.da)
+```
+
+## 7.5 ARIMA(2,1,2)
+
+```{r}
+model5.da = Arima(train.diff, order = c(2,0,2), include.mean = FALSE, method = "ML")
+summary(model5.da)
+lmtest::coeftest(model5.da)
+```
+
+## 7.6 Ringkasan AIC
+
+```{r}
+model_tentatif <- data.frame(
+  Model = c("ARIMA(0,1,1)", "ARIMA(1,1,0)", "ARIMA(1,1,1)",
+            "ARIMA(1,1,2)", "ARIMA(2,1,2)"),
+  AIC = c(AIC(model1.da), AIC(model2.da), AIC(model3.da),
+          AIC(model4.da), AIC(model5.da)),
+  BIC = c(BIC(model1.da), BIC(model2.da), BIC(model3.da),
+          BIC(model4.da), BIC(model5.da))
+)
+
+model_tentatif
+```
+
+Berdasarkan pendugaan parameter di atas, model ARIMA(0,1,1) memiliki nilai AIC terkecil (1700,74) dan BIC terkecil (1706,82). Parameter MA(1) pada model ini signifikan (p-value 0,0051). Pada model lain: ARIMA(1,1,0) memiliki AR(1) signifikan (p-value 0,016) tetapi AIC lebih besar (1702,20); ARIMA(1,1,1) hanya MA(1) yang signifikan (p-value 0,017) sedangkan AR(1) tidak signifikan (p-value 0,161) dengan AIC 1701,69; ARIMA(1,1,2) dan ARIMA(2,1,2) tidak memiliki parameter AR/MA yang signifikan dengan AIC yang semakin besar (1703,42 dan 1705,19). Data hasil differencing dimodelkan tanpa intercept (drift) karena pada model awal yang menyertakan intercept, rataan data hasil differencing tidak signifikan (p-value 0,4995). Oleh karena itu, model yang dipilih adalah ARIMA(0,1,1).
+
+# 8 Analisis Sisaan
+
+## 8.1 Eksplorasi Sisaan
+
+```{r}
+sisaan.da <- model1.da$residuals
+
+par(mfrow = c(2,2),
+    mar = c(4,4,2,1),
+    oma = c(0,0,2,0))
+
+# Q-Q Plot
+qqnorm(sisaan.da, main = "Normal Q-Q Plot")
+qqline(sisaan.da, col = "blue", lwd = 2)
+
+# Plot Sisaan vs Waktu
+plot(sisaan.da, type = "p",
+     main = "Plot Sisaan vs Waktu",
+     xlab = "Waktu", ylab = "Sisaan")
+
+# ACF
+acf(sisaan.da, main = "ACF Sisaan")
+
+# PACF
+pacf(sisaan.da, main = "PACF Sisaan")
+```
+
+Berdasarkan plot kuantil-kuantil normal, sebagian besar titik berada di sekitar garis 45°, tetapi terdapat penyimpangan pada kedua ekor sehingga sisaan tidak sepenuhnya menyebar normal. Pada plot sisaan terhadap waktu, sisaan bergerak di sekitar nol, namun terdapat beberapa pencilan (sekitar -210 dan +140) sehingga lebar pita sebaran sisaan tampak kurang seragam. Plot ACF dan PACF sisaan tidak memiliki spike yang melewati batas signifikansi sehingga sisaan dapat dianggap saling bebas. Kondisi ini diuji lebih lanjut dengan uji formal.
+
+## 8.2 Uji Formal
+
+### 8.2.1 Normalitas Sisaan
+
+```{r}
+nortest::lillie.test(sisaan.da)
+```
+
+$H_0$ : Sisaan menyebar normal
+
+$H_1$ : Sisaan tidak menyebar normal
+
+Didapat *p-value* sebesar 0.0002083 yang lebih kecil dari taraf nyata 5% sehingga tolak \(H_0\) dan sisaan tidak menyebar normal. Hal ini sesuai dengan hasil eksplorasi yang menunjukkan penyimpangan titik pada kedua ekor plot kuantil-kuantil normal.
+
+### 8.2.2 Kebebasan Sisaan
+
+```{r}
+Box.test(sisaan.da, lag = 10, type = "Ljung-Box", fitdf = 1)
+```
+
+$H_0$ : Sisaan saling bebas
+
+$H_1$ : Sisaan tidak saling bebas
+
+Didapat *p-value* sebesar 0.4523 (Ljung-Box lag 10) yang lebih besar dari taraf nyata 5% sehingga gagal tolak \(H_0\) dan sisaan saling bebas (tidak ada autokorelasi). Hal ini sesuai dengan hasil eksplorasi menggunakan plot ACF dan PACF sisaan.
+
+### 8.2.3 Kehomogenan Ragam Sisaan
+
+```{r}
+Box.test((sisaan.da)^2, lag = 10, type = "Ljung-Box")
+```
+
+$H_0$ : Ragam sisaan homogen
+
+$H_1$ : Ragam sisaan tidak homogen
+
+Didapat *p-value* sebesar 0.4906 (Ljung-Box lag 10) yang lebih besar dari taraf nyata 5% sehingga gagal tolak \(H_0\) dan ragam sisaan homogen (tidak terdapat efek ARCH hingga lag ke-10). Meskipun plot sisaan menunjukkan beberapa pencilan, uji formal tidak mendeteksi adanya heterogenitas ragam.
+
+### 8.2.4 Nilai Tengah Sisaan
+
+```{r}
+t.test(sisaan.da, mu = 0, conf.level = 0.95)
+```
+
+$H_0$ : Nilai tengah sisaan sama dengan 0
+
+$H_1$ : Nilai tengah sisaan tidak sama dengan 0
+
+Didapat *p-value* sebesar 0.5037 yang lebih besar dari taraf nyata 5% sehingga gagal tolak \(H_0\) dan nilai tengah sisaan sama dengan nol.
+
+# 9 Overfitting
+
+Overfitting dilakukan dengan menaikkan orde AR(p) dan MA(q) dari model terpilih. Untuk ARIMA(0,1,1), kandidat overfitting adalah ARIMA(1,1,1) dan ARIMA(0,1,2).
+
+```{r}
+model.over1 = Arima(train.diff, order = c(1,0,1), include.mean = FALSE, method = "ML")   # ARIMA(1,1,1)
+summary(model.over1)
+lmtest::coeftest(model.over1)
+```
+
+```{r}
+model.over2 = Arima(train.diff, order = c(0,0,2), include.mean = FALSE, method = "ML")   # ARIMA(0,1,2)
+summary(model.over2)
+lmtest::coeftest(model.over2)
+```
+
+```{r}
+overfitting <- data.frame(
+  Model = c("ARIMA(0,1,1)", "ARIMA(1,1,1)", "ARIMA(0,1,2)"),
+  AIC   = c(AIC(model1.da), AIC(model.over1), AIC(model.over2)),
+  BIC   = c(BIC(model1.da), BIC(model.over1), BIC(model.over2))
+)
+overfitting
+```
+
+Berdasarkan hasil di atas, kedua model overfitting memiliki AIC dan BIC yang lebih besar dibandingkan ARIMA(0,1,1) (AIC ARIMA(0,1,1) = 1700,74, ARIMA(1,1,1) = 1701,69, dan ARIMA(0,1,2) = 1701,71). Selain itu, parameter tambahan tidak signifikan, yaitu AR(1) pada ARIMA(1,1,1) (p-value 0,161) dan MA(2) pada ARIMA(0,1,2) (p-value 0,309). Oleh karena itu, model yang digunakan untuk peramalan adalah ARIMA(0,1,1).
+
+# 10 Peramalan
+
+```{r}
+ramalan.da <- forecast::forecast(model1.da, h = length(test.ts))
+ramalan.da
+```
+
+```{r}
+data.ramalan.da <- ramalan.da$mean
+plot(ramalan.da)
+```
+
+Hasil peramalan di atas masih berada pada skala data hasil differencing. Nilai ramalan hanya berubah pada periode pertama (18,24), kemudian bernilai nol untuk periode berikutnya, karena model MA(1) hanya memiliki memori satu periode dan model tidak memuat drift. Ramalan perlu dikembalikan ke skala awal dengan *inverse differencing*.
+
+```{r}
+# Inverse differencing
+pt_akhir_train <- tail(train.ts, 1)
+
+forecast.inv <- diffinv(data.ramalan.da, differences = 1, xi = pt_akhir_train)
+hasil <- forecast.inv[-1]     # buang titik awal (nilai terakhir train)
+
+# Bandingkan aktual vs forecast
+perbandingan.da <- cbind(
+  Aktual   = as.numeric(test.ts),
+  Forecast = hasil
+)
+
+print(head(perbandingan.da, 10))
+```
+
+```{r}
+# Plot data aktual dan forecast
+ts.plot(datakurs.ts, col = "black", lty = 1,
+        xlab = "Waktu", ylab = "Kurs")
+
+lines((n.train + 1):(n.train + length(hasil)), hasil,
+      col = "blue", lty = 2, lwd = 2)
+
+legend("topleft",
+       legend = c("Data Aktual", "Forecast"),
+       col = c("black", "blue"),
+       lty = c(1, 2), lwd = c(1, 2), bty = "n")
+```
+
+Berdasarkan plot terlihat bahwa ramalan ARIMA(0,1,1) datar di sekitar 15.469 sepanjang periode uji, sedangkan data aktual pada periode uji justru menurun hingga sekitar 14.630. Ketepatan ramalan diukur secara kuantitatif pada bagian evaluasi berikut.
+
+# 11 Evaluasi Model
+
+Evaluasi dilakukan dengan membandingkan hasil ramalan dengan data uji (skala kurs asli) menggunakan beberapa metrik ukuran kesalahan.
+
+```{r}
+aktual   <- as.numeric(test.ts)
+ramalan  <- as.numeric(hasil)
+galat    <- aktual - ramalan
+
+# Metrik evaluasi
+ME    <- mean(galat)
+MSE   <- mean(galat^2)
+RMSE  <- sqrt(MSE)
+MAE   <- mean(abs(galat))
+MAPE  <- mean(abs(galat / aktual)) * 100
+SMAPE <- mean(2 * abs(galat) / (abs(aktual) + abs(ramalan))) * 100
+
+evaluasi <- data.frame(
+  Metrik = c("ME", "MSE", "RMSE", "MAE", "MAPE (%)", "SMAPE (%)"),
+  Nilai  = round(c(ME, MSE, RMSE, MAE, MAPE, SMAPE), 4)
+)
+evaluasi
+```
+
+```{r}
+accuracy(ramalan, aktual)
+naive <- rep(as.numeric(tail(train.ts, 1)), length(test.ts))
+accuracy(naive, aktual)
+```
+
+Berdasarkan hasil evaluasi, nilai RMSE sebesar 558,07, MAE sebesar 491,22, dan MAPE sebesar 3,31%. Nilai ME sebesar -491,22 yang sama dengan MAE menunjukkan bahwa ramalan selalu lebih tinggi dari data aktual. Secara persentase galat relatif kecil (MAPE 3,31%) karena skala kurs yang besar, tetapi model gagal menangkap arah pergerakan data uji. Sebagai pembanding, peramalan naive (nilai terakhir data latih diulang) menghasilkan RMSE 542,08, MAE 473,85, dan MAPE 3,20%, yang sedikit lebih baik dibandingkan ARIMA(0,1,1). Hal ini wajar karena ramalan ARIMA(0,1,1) hampir datar sehingga menyerupai random walk dengan koreksi kecil pada periode pertama. Dengan demikian, model ARIMA(0,1,1) tidak memberikan perbaikan dibandingkan metode naive dan kurang baik untuk peramalan jangka panjang pada data ini karena tidak dapat memprediksi titik balik.
+
+# 12 Kesimpulan
+
+Data kurs JISDOR tidak stasioner dalam rataan (ADF p-value 0,8332) sehingga dilakukan differencing satu kali, setelah itu data stasioner (ADF p-value ≤ 0,01). Model terbaik yang terpilih adalah ARIMA(0,1,1) tanpa drift karena memiliki AIC (1700,74) dan BIC (1706,82) terkecil, parameter MA(1) signifikan (p-value 0,0051), dan model overfitting (ARIMA(1,1,1) dan ARIMA(0,1,2)) tidak lebih baik. Asumsi kebebasan sisaan (p-value 0,4523), kehomogenan ragam (p-value 0,4906), dan nilai tengah sisaan sama dengan nol (p-value 0,5037) terpenuhi, tetapi asumsi normalitas tidak terpenuhi (Lilliefors p-value 0,0002) sehingga selang kepercayaan ramalan perlu ditafsirkan dengan hati-hati. Pada data uji, model menghasilkan RMSE 558,07, MAE 491,22, dan MAPE 3,31%. Ramalan datar di sekitar 15.469 sementara data aktual menurun, dan hasilnya tidak lebih baik dari metode naive (RMSE 542,08; MAE 473,85; MAPE 3,20%), sehingga model kurang mampu meramalkan pergerakan kurs pada periode uji.
